@@ -117,7 +117,10 @@ def add_watermark(image_path, date_text, font_size, color, position):
             font = ImageFont.load_default()
         
         # 获取文本大小
-        text_width, text_height = draw.textsize(date_text, font=font)
+        # 使用textbbox代替已弃用的textsize方法
+        left, top, right, bottom = draw.textbbox((0, 0), date_text, font=font)
+        text_width = right - left
+        text_height = bottom - top
         
         # 计算水印位置
         x, y = get_watermark_position(position, img.width, img.height, text_width, text_height)
