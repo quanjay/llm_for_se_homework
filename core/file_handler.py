@@ -189,10 +189,10 @@ class FileHandler:
             print("错误: 未设置输出目录")
             return None
             
-        # 检查输出目录是否与原图片目录相同
+        # 安全措施：检查输出目录是否与原图片目录相同
         original_dir = os.path.dirname(image_path)
         if os.path.abspath(original_dir) == os.path.abspath(self.output_directory):
-            print("错误: 输出目录不能与原图片目录相同")
+            print("错误: 输出目录不能与原图片目录相同，以防止覆盖原图")
             return None
             
         # 生成输出文件名

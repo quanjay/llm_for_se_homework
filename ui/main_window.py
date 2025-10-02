@@ -138,15 +138,7 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("主工具栏")
         self.addToolBar(toolbar)
         
-        # 导入图片
-        import_action = QAction("导入图片", self)
-        import_action.triggered.connect(self._import_images)
-        toolbar.addAction(import_action)
-        
-        # 导出图片
-        export_action = QAction("导出图片", self)
-        export_action.triggered.connect(self._export_images)
-        toolbar.addAction(export_action)
+        # 工具栏已移除导入和导出按钮，因为这些功能已在文件菜单中存在
     
     def _create_statusbar(self):
         """创建状态栏"""
@@ -183,38 +175,165 @@ class MainWindow(QMainWindow):
             self.image_list.refresh_list()
     
     def _export_images(self):
-        """导出图片"""
-        # 检查是否有导入的图片
+        """导出所有图片"""
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QPushButton, QRadioButton, QButtonGroup, QGroupBox, QFileDialog, QMessageBox
+        
         if not self.file_handler.get_imported_images():
             QMessageBox.warning(self, "警告", "没有可导出的图片")
             return
         
-        # 选择输出目录
-        directory = QFileDialog.getExistingDirectory(self, "选择输出目录")
-        if not directory:
-            return
+        # 创建统一的导出配置对话框
+        export_dialog = QDialog(self)
+        export_dialog.setWindowTitle("导出配置")
+        export_dialog.setMinimumWidth(400)
         
-        # 设置输出目录
-        if not self.file_handler.set_output_directory(directory):
-            QMessageBox.critical(self, "错误", "无法设置输出目录")
+        layout = QVBoxLayout()
+        
+        # 输出目录选择
+        dir_group = QGroupBox("输出目录")
+        dir_layout = QHBoxLayout()
+        self.output_dir_edit = QLineEdit()
+        self.output_dir_edit.setReadOnly(True)
+        browse_button = QPushButton("浏览...")
+        browse_button.clicked.connect(self._browse_output_dir)
+        dir_layout.addWidget(self.output_dir_edit)
+        dir_layout.addWidget(browse_button)
+        dir_group.setLayout(dir_layout)
+        layout.addWidget(dir_group)
+        
+        # 输出格式选择
+        format_group = QGroupBox("输出格式")
+        format_layout = QHBoxLayout()
+        format_combo = QComboBox()
+        format_combo.addItems(["JPEG", "PNG"])
+        format_layout.addWidget(format_combo)
+        format_group.setLayout(format_layout)
+        layout.addWidget(format_group)
+        
+        # 命名规则选择
+        naming_group = QGroupBox("文件命名规则")
+        naming_layout = QVBoxLayout()
+        
+        naming_radio_group = QButtonGroup(export_dialog)
+        original_radio = QRadioButton("保持原文件名")
+        prefix_radio = QRadioButton("添加前缀")
+        suffix_radio = QRadioButton("添加后缀")
+        
+        naming_radio_group.addButton(original_radio, 0)
+        naming_radio_group.addButton(prefix_radio, 1)
+        naming_radio_group.addButton(suffix_radio, 2)
+        original_radio.setChecked(True)
+        
+        prefix_layout = QHBoxLayout()
+        prefix_layout.addWidget(QLabel("前缀:"))
+        prefix_edit = QLineEdit("wm_")
+        prefix_layout.addWidget(prefix_edit)
+        
+        suffix_layout = QHBoxLayout()
+        suffix_layout.addWidget(QLabel("后缀:"))
+        suffix_edit = QLineEdit("_watermarked")
+        suffix_layout.addWidget(suffix_edit)
+        
+        naming_layout.addWidget(original_radio)
+        naming_layout.addWidget(prefix_radio)
+        naming_layout.addLayout(prefix_layout)
+        naming_layout.addWidget(suffix_radio)
+        naming_layout.addLayout(suffix_layout)
+        
+        naming_group.setLayout(naming_layout)
+        layout.addWidget(naming_group)
+        
+        # 按钮
+        button_layout = QHBoxLayout()
+        export_button = QPushButton("导出")
+        cancel_button = QPushButton("取消")
+        
+        export_button.clicked.connect(lambda: self._process_export(
+            export_dialog,
+            self.output_dir_edit.text(),
+            format_combo.currentText(),
+            naming_radio_group.checkedId(),
+            prefix_edit.text(),
+            suffix_edit.text()
+        ))
+        cancel_button.clicked.connect(export_dialog.reject)
+        
+        button_layout.addWidget(export_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
+        
+        export_dialog.setLayout(layout)
+        export_dialog.exec_()
+    
+    def _browse_output_dir(self):
+        """浏览并选择输出目录"""
+        output_dir = QFileDialog.getExistingDirectory(self, "选择输出目录")
+        if output_dir:
+            # 检查是否与导入目录相同
+            import_dirs = set()
+            for image_info in self.file_handler.get_imported_images():
+                import_dirs.add(os.path.dirname(os.path.abspath(image_info["path"])))
+            
+            if os.path.abspath(output_dir) in import_dirs:
+                QMessageBox.warning(self, "警告", "输出目录不能与导入目录相同，以防止覆盖原图")
+                return
+                
+            self.output_dir_edit.setText(output_dir)
+    
+    def _process_export(self, dialog, output_dir, output_format, naming_type_id, prefix, suffix):
+        """处理导出操作"""
+        # 检查输出目录
+        if not output_dir:
+            QMessageBox.warning(self, "警告", "请选择输出目录")
             return
+            
+        # 设置输出目录
+        if not self.file_handler.set_output_directory(output_dir):
+            QMessageBox.critical(self, "错误", "设置输出目录失败")
+            return
+            
+        # 设置输出格式
+        self.file_handler.set_output_format(output_format)
+        
+        # 设置命名规则
+        naming_type = ["original", "prefix", "suffix"][naming_type_id]
+        value = prefix if naming_type == "prefix" else suffix if naming_type == "suffix" else ""
+        self.file_handler.set_naming_rule(naming_type, value)
         
         # 处理所有图片并导出
-        watermarked_images = {}
-        for image_info in self.file_handler.get_imported_images():
-            try:
-                with Image.open(image_info["path"]) as img:
-                    watermarked = self.watermark_processor.add_watermark(img)
-                    watermarked_images[image_info["path"]] = watermarked
-            except Exception as e:
-                QMessageBox.warning(self, "警告", f"处理图片时出错: {str(e)}")
-        
-        # 导出图片
-        success, total = self.file_handler.export_all_images(watermarked_images)
-        
-        # 显示结果
-        QMessageBox.information(self, "导出完成", f"成功导出 {success}/{total} 张图片")
-        self.statusBar.showMessage(f"成功导出 {success}/{total} 张图片")
+        try:
+            watermarked_images = {}
+            for image_info in self.file_handler.get_imported_images():
+                try:
+                    with Image.open(image_info["path"]) as img:
+                        watermarked_img = self.watermark_processor.add_watermark(img)
+                        watermarked_images[image_info["path"]] = watermarked_img
+                except Exception as e:
+                    QMessageBox.warning(self, "警告", f"处理图片 {os.path.basename(image_info['path'])} 时出错: {str(e)}")
+            
+            # 导出图片
+            success_count, total_count = 0, len(watermarked_images)
+            for original_path, img in watermarked_images.items():
+                export_path = self.file_handler.export_image(original_path, img)
+                if export_path:
+                    success_count += 1
+            
+            # 关闭对话框
+            dialog.accept()
+            
+            # 显示导出结果
+            if success_count > 0:
+                QMessageBox.information(
+                    self, 
+                    "导出完成", 
+                    f"成功导出 {success_count}/{total_count} 张图片到:\n{output_dir}"
+                )
+                self.statusBar.showMessage(f"成功导出 {success_count}/{total_count} 张图片到 {output_dir}")
+            else:
+                QMessageBox.warning(self, "警告", "没有图片被成功导出")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"导出过程中发生错误: {str(e)}")
     
     def _update_preview(self):
         """更新预览"""
