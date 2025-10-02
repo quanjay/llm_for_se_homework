@@ -1,0 +1,23 @@
+{
+    "watermark": {
+        "text": "wrong",
+        "font_name": "Times New Roman",
+        "font_size": 100,
+        "font_color": [
+            0,
+            0,
+            0
+        ],
+        "opacity": 100,
+        "position": "topright",
+        "custom_position": null
+    },
+    "export": {
+        "format": "JPEG",
+        "naming_rule": {
+            "type": "original",
+            "prefix": "",
+            "suffix": ""
+        }
+    }
+}
