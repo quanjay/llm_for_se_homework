@@ -254,7 +254,8 @@ class MainWindow(QMainWindow):
     def update_opacity(self, value):
         # 更新透明度值
         self.opacity_value.setText(f"{value}%")
-        self.current_color.setAlpha(int(255 * value / 100))
+        # 反转透明度逻辑：滑块值越大，水印越透明（alpha值越小）
+        self.current_color.setAlpha(int(255 * (100 - value) / 100))
         self.update_color_button()
         self.update_watermark()
     
@@ -264,8 +265,8 @@ class MainWindow(QMainWindow):
         if color.isValid():
             self.current_color = color
             self.update_color_button()
-            # 更新透明度滑块
-            self.opacity_slider.setValue(int(color.alpha() / 2.55))
+            # 更新透明度滑块（反转逻辑：alpha值越小，滑块值越大）
+            self.opacity_slider.setValue(100 - int(color.alpha() / 2.55))
             self.update_watermark()
     
     def set_position(self, position_index):

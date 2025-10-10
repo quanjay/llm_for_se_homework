@@ -77,12 +77,23 @@ class WatermarkProcessor:
         
         # 计算位置
         if self.relative_position:
-            # 使用相对位置计算
+            # 优先使用相对位置计算，确保在任何大小的图片上都能正确显示
             rel_x, rel_y = self.relative_position
-            position = QPoint(int(rel_x * image_width), int(rel_y * image_height))
+            x = int(rel_x * image_width)
+            y = int(rel_y * image_height)
+            
+            # 确保水印不会超出图片边界
+            x = min(x, max(0, image_width - text_width))
+            y = min(y, max(0, image_height - text_height))
+            
+            position = QPoint(x, y)
+            # 更新自定义位置，以便下次使用
             self.custom_position = position
         elif self.custom_position:
-            position = self.custom_position
+            # 确保自定义位置不会超出图片边界
+            x = min(self.custom_position.x(), max(0, image_width - text_width))
+            y = min(self.custom_position.y(), max(0, image_height - text_height))
+            position = QPoint(x, y)
         else:
             position = self.position_map[self.position](image_width, image_height, text_width, text_height)
         
@@ -169,7 +180,8 @@ class WatermarkProcessor:
             if format_option.lower() == 'jpg' or format_option.lower() == 'jpeg':
                 qimage.save(output_path, 'JPEG', 95)  # 95是质量参数，范围0-100
             else:  # PNG
-                qimage.save(output_path, 'PNG')
+                # 使用额外参数禁用iCCP块，解决sRGB配置文件警告
+                qimage.save(output_path, 'PNG', -1)
                 
             return True
         except Exception as e:
