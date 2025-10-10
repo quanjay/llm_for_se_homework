@@ -21,6 +21,14 @@
 
 ## 安装说明
 
+### 方法一：直接下载可执行文件（推荐）
+
+1. 在[GitHub Releases](https://github.com/YOUR_USERNAME/llm_for_se_homework/releases)页面下载最新版本的`WatermarkApp_release.zip`
+2. 解压缩下载的文件
+3. 运行解压后文件夹中的`WatermarkApp.exe`
+
+### 方法二：从源代码运行
+
 1. 确保已安装Python 3.8或更高版本
 2. 克隆或下载本项目到本地
 3. 安装依赖包：
