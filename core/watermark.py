@@ -1,246 +1,177 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 from PIL import Image, ImageDraw, ImageFont
-from typing import Tuple, Dict, Any, Optional
+from PyQt5.QtGui import QImage, QPainter, QFont, QColor
+from PyQt5.QtCore import Qt, QPoint, QRect
 import os
 
 class WatermarkProcessor:
-    """水印处理模块，负责添加文本水印"""
+    """水印处理类，负责水印的添加和预览"""
     
     def __init__(self):
-        # 水印文本设置
-        self.text = "水印示例"
-        self.font_name = "Arial"
-        self.font_size = 36
-        self.font_color = (255, 255, 255, 128)  # RGBA，最后一个值为透明度
+        self.text = "水印文本"
+        self.font_size = 24
+        self.color = QColor(255, 0, 0, 128)  # 半透明红色
+        self.position = 4  # 默认中心位置
+        self.custom_position = None  # 自定义位置
+        self.relative_position = None  # 相对位置 (x%, y%)
         
-        # 水印位置
-        self.position = "center"  # 预设位置: topleft, topright, center, bottomleft, bottomright
-        self.custom_position = None  # 自定义位置 (x, y)
-        
-        # 字体对象
-        self._font = None
-        self._update_font()
+        # 位置映射（九宫格）
+        self.position_map = [
+            lambda w, h, tw, th: QPoint(10, 10),  # 左上
+            lambda w, h, tw, th: QPoint((w - tw) // 2, 10),  # 上中
+            lambda w, h, tw, th: QPoint(w - tw - 10, 10),  # 右上
+            lambda w, h, tw, th: QPoint(10, (h - th) // 2),  # 左中
+            lambda w, h, tw, th: QPoint((w - tw) // 2, (h - th) // 2),  # 中心
+            lambda w, h, tw, th: QPoint(w - tw - 10, (h - th) // 2),  # 右中
+            lambda w, h, tw, th: QPoint(10, h - th - 10),  # 左下
+            lambda w, h, tw, th: QPoint((w - tw) // 2, h - th - 10),  # 下中
+            lambda w, h, tw, th: QPoint(w - tw - 10, h - th - 10),  # 右下
+        ]
     
-    def set_text(self, text: str) -> None:
+    def set_text(self, text):
         """设置水印文本"""
         self.text = text
     
-    def set_font(self, font_name: str, font_size: int) -> bool:
-        """
-        设置字体和大小
+    def set_font_size(self, size):
+        """设置字体大小"""
+        self.font_size = size
+    
+    def set_color(self, color):
+        """设置水印颜色"""
+        self.color = color
+    
+    def set_position(self, position_index):
+        """设置水印位置"""
+        if 0 <= position_index < len(self.position_map):
+            self.position = position_index
+            self.custom_position = None  # 清除自定义位置
+            self.relative_position = None  # 清除相对位置
+    
+    def set_custom_position(self, position, image_width=None, image_height=None):
+        """设置自定义位置，同时计算相对位置"""
+        self.custom_position = position
         
-        Args:
-            font_name: 字体名称
-            font_size: 字体大小
+        # 如果提供了图像尺寸，计算相对位置
+        if image_width and image_height and position:
+            rel_x = position.x() / image_width
+            rel_y = position.y() / image_height
+            self.relative_position = (rel_x, rel_y)
             
-        Returns:
-            bool: 设置是否成功
-        """
-        self.font_name = font_name
-        self.font_size = font_size
-        return self._update_font()
+    def get_position_from_relative(self, image_width, image_height):
+        """根据相对位置和图像尺寸计算绝对位置"""
+        if self.relative_position:
+            rel_x, rel_y = self.relative_position
+            abs_x = int(rel_x * image_width)
+            abs_y = int(rel_y * image_height)
+            return QPoint(abs_x, abs_y)
+        return None
     
-    def set_color(self, color: Tuple[int, int, int], opacity: int) -> None:
-        """
-        设置字体颜色和透明度
+    def get_text_rect(self, painter, image_width, image_height):
+        """获取文本矩形区域"""
+        # 计算文本大小
+        rect = painter.fontMetrics().boundingRect(self.text)
+        text_width = rect.width()
+        text_height = rect.height()
         
-        Args:
-            color: RGB颜色元组 (r, g, b)
-            opacity: 不透明度 (0-100)
-        """
-        # 将不透明度转换为alpha值 (0-255)
-        alpha = int(opacity * 2.55)
-        self.font_color = (color[0], color[1], color[2], alpha)
-    
-    def set_position(self, position: str) -> None:
-        """
-        设置预设位置
-        
-        Args:
-            position: 位置名称 (topleft, topright, center, bottomleft, bottomright)
-        """
-        if position in ["topleft", "topright", "center", "bottomleft", "bottomright", 
-                       "topcenter", "bottomcenter", "leftcenter", "rightcenter"]:
-            self.position = position
-            self.custom_position = None
-    
-    def set_custom_position(self, x: int, y: int) -> None:
-        """
-        设置自定义位置
-        
-        Args:
-            x: X坐标
-            y: Y坐标
-        """
-        self.custom_position = (x, y)
-        self.position = "custom"
-    
-    def add_watermark(self, image: Image.Image) -> Image.Image:
-        """
-        添加水印到图片
-        
-        Args:
-            image: 原图片对象
-            
-        Returns:
-            Image.Image: 添加水印后的图片对象
-        """
-        # 创建一个新图像，保留原图的模式和大小
-        if image.mode != 'RGBA' and 'A' not in image.mode:
-            watermarked = image.convert('RGBA')
+        # 计算位置
+        if self.relative_position:
+            # 使用相对位置计算
+            rel_x, rel_y = self.relative_position
+            position = QPoint(int(rel_x * image_width), int(rel_y * image_height))
+            self.custom_position = position
+        elif self.custom_position:
+            position = self.custom_position
         else:
-            watermarked = image.copy()
+            position = self.position_map[self.position](image_width, image_height, text_width, text_height)
+        
+        return QRect(position.x(), position.y(), text_width, text_height)
+        
+    def get_text_rect_standalone(self, font=None):
+        """获取文本的矩形区域（独立版本，不需要QPainter实例）"""
+        from PyQt5.QtGui import QFontMetrics, QFont
+        if font is None:
+            font = QFont()
+            font.setPointSize(self.font_size)
+        metrics = QFontMetrics(font)
+        rect = metrics.boundingRect(self.text)
+        return rect
+    
+    def apply_watermark_preview(self, qimage):
+        """在QImage上应用水印（用于预览）"""
+        if not self.text:
+            return
         
         # 创建绘图对象
-        draw = ImageDraw.Draw(watermarked)
+        painter = QPainter(qimage)
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setRenderHint(QPainter.TextAntialiasing)
         
-        # 确保字体已加载
-        if not self._font:
-            self._update_font()
-            
-        # 确保文本不为空
-        if not self.text or len(self.text.strip()) == 0:
-            self.text = "水印示例"
+        # 设置字体
+        font = QFont()
+        font.setPointSize(self.font_size)
+        painter.setFont(font)
         
-        # 计算文本大小
-        try:
-            # 使用getbbox方法替代已弃用的textsize方法
-            if hasattr(self._font, 'getbbox'):
-                bbox = self._font.getbbox(self.text)
-                text_width, text_height = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            else:
-                # 向后兼容旧版本PIL
-                text_width, text_height = draw.textsize(self.text, font=self._font)
-        except Exception as e:
-            print(f"计算文本大小时出错: {str(e)}")
-            # 估算文本大小
-            text_width = self.font_size * len(self.text) * 0.7
-            text_height = self.font_size * 1.5
+        # 设置颜色
+        painter.setPen(self.color)
         
-        # 计算水印位置
-        position = self._calculate_position(watermarked.size, (int(text_width), int(text_height)))
+        # 获取文本矩形区域
+        image_width = qimage.width()
+        image_height = qimage.height()
+        text_rect = self.get_text_rect(painter, image_width, image_height)
         
-        # 绘制水印文本
-        try:
-            draw.text(position, self.text, font=self._font, fill=self.font_color)
-        except UnicodeEncodeError:
-            # 如果出现编码错误，尝试使用ASCII字符
-            draw.text(position, "Watermark", font=self._font, fill=self.font_color)
-        except Exception as e:
-            print(f"绘制水印文本时出错: {str(e)}")
-        
-        return watermarked
+        # 绘制文本
+        painter.drawText(text_rect.x(), text_rect.y() + text_rect.height(), self.text)
+        painter.end()
     
-    def _update_font(self) -> bool:
-        """
-        更新字体对象
-        
-        Returns:
-            bool: 更新是否成功
-        """
+    def apply_watermark_and_save(self, image_path, output_dir, prefix, suffix, format_option):
+        """应用水印并保存图片"""
         try:
-            # 使用更可靠的方式加载字体，支持中文
-            # 尝试使用系统中常见的支持中文的字体
-            font_paths = [
-                "C:/Windows/Fonts/simhei.ttf",  # 黑体
-                "C:/Windows/Fonts/simsun.ttc",  # 宋体
-                "C:/Windows/Fonts/msyh.ttc",    # 微软雅黑
-                "C:/Windows/Fonts/simkai.ttf",  # 楷体
-                self.font_name  # 用户指定的字体名称
-            ]
+            # 获取文件名（不含路径和扩展名）
+            base_name = os.path.basename(image_path)
+            file_name, _ = os.path.splitext(base_name)
             
-            for font_path in font_paths:
-                try:
-                    self._font = ImageFont.truetype(font_path, self.font_size)
-                    return True
-                except Exception:
-                    continue
-                    
-            # 如果所有字体都加载失败，使用默认字体
-            self._font = ImageFont.load_default()
-            return True
+            # 构建输出文件名
+            output_file = f"{prefix}{file_name}{suffix}.{format_option.lower()}"
+            output_path = os.path.join(output_dir, output_file)
             
-        except Exception as e:
-            print(f"加载字体时出错: {str(e)}")
-            self._font = ImageFont.load_default()
-            return False
-    
-    def _calculate_position(self, image_size: Tuple[int, int], text_size: Tuple[int, int]) -> Tuple[int, int]:
-        """
-        计算水印位置
-        
-        Args:
-            image_size: 图片大小 (width, height)
-            text_size: 文本大小 (width, height)
-            
-        Returns:
-            Tuple[int, int]: 水印位置坐标 (x, y)
-        """
-        img_width, img_height = image_size
-        text_width, text_height = text_size
-        
-        # 如果是自定义位置
-        if self.position == "custom" and self.custom_position:
-            return self.custom_position
-        
-        # 预设位置
-        padding = 10  # 边距
-        
-        if self.position == "topleft":
-            return (padding, padding)
-        elif self.position == "topright":
-            return (img_width - text_width - padding, padding)
-        elif self.position == "bottomleft":
-            return (padding, img_height - text_height - padding)
-        elif self.position == "bottomright":
-            return (img_width - text_width - padding, img_height - text_height - padding)
-        elif self.position == "topcenter":
-            return ((img_width - text_width) // 2, padding)
-        elif self.position == "bottomcenter":
-            return ((img_width - text_width) // 2, img_height - text_height - padding)
-        elif self.position == "leftcenter":
-            return (padding, (img_height - text_height) // 2)
-        elif self.position == "rightcenter":
-            return (img_width - text_width - padding, (img_height - text_height) // 2)
-        else:  # center
-            return ((img_width - text_width) // 2, (img_height - text_height) // 2)
-    
-    def get_preview(self, image: Image.Image) -> Image.Image:
-        """
-        获取添加水印后的预览图
-        
-        Args:
-            image: 原图片对象
-            
-        Returns:
-            Image.Image: 添加水印后的预览图
-        """
-        try:
-            # 创建一个副本，避免修改原图
-            preview = image.copy()
-            
-            # 确保图片是RGB模式
-            if preview.mode != 'RGB' and preview.mode != 'RGBA':
-                preview = preview.convert('RGB')
-            
+            # 使用与预览相同的方法应用水印
+            # 创建QImage
+            qimage = QImage(image_path)
+            if qimage.isNull():
+                return False
+                
             # 创建绘图对象
-            draw = ImageDraw.Draw(preview)
+            painter = QPainter()
+            painter.begin(qimage)
             
-            # 确保字体已加载
-            if not self._font:
-                self._update_font()
+            # 设置字体
+            font = QFont()
+            font.setPointSize(self.font_size)
+            painter.setFont(font)
             
-            # 使用简单的文本和位置
-            position = (20, 20)  # 左上角固定位置
+            # 设置颜色
+            painter.setPen(self.color)
             
-            # 安全绘制文本
-            try:
-                draw.text(position, self.text or "水印示例", font=self._font, fill=self.font_color)
-            except Exception:
-                # 如果失败，使用默认文本
-                draw.text(position, "Watermark", font=ImageFont.load_default(), fill=self.font_color)
+            # 计算位置
+            image_width = qimage.width()
+            image_height = qimage.height()
+            text_rect = self.get_text_rect(painter, image_width, image_height)
             
-            return preview
+            # 绘制文本
+            painter.drawText(text_rect, Qt.AlignLeft, self.text)
+            
+            # 结束绘图
+            painter.end()
+            
+            # 保存图片，指定格式和质量
+            if format_option.lower() == 'jpg' or format_option.lower() == 'jpeg':
+                qimage.save(output_path, 'JPEG', 95)  # 95是质量参数，范围0-100
+            else:  # PNG
+                qimage.save(output_path, 'PNG')
+                
+            return True
         except Exception as e:
-            print(f"生成预览图时出错: {str(e)}")
-            # 返回原图，不添加水印
-            return image
+            print(f"导出图片时出错: {e}")
+            return False

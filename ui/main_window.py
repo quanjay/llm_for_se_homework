@@ -1,532 +1,486 @@
-from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
-                             QLabel, QPushButton, QFileDialog, QListWidget, QListWidgetItem,
-                             QComboBox, QLineEdit, QSlider, QGroupBox, QRadioButton,
-                             QMessageBox, QAction, QMenu, QToolBar, QStatusBar, QSplitter)
-from PyQt5.QtGui import QPixmap, QImage, QDragEnterEvent, QDropEvent, QIcon
-from PyQt5.QtCore import Qt, QSize, pyqtSignal, QMimeData, QUrl
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
 import os
-import sys
-from PIL import Image, ImageQt
+from PyQt5.QtWidgets import (QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
+                            QPushButton, QLabel, QFileDialog, QListWidget, 
+                            QListWidgetItem, QComboBox, QLineEdit, QSlider, 
+                            QGroupBox, QRadioButton, QSpinBox, QColorDialog,
+                            QMessageBox, QSplitter, QFrame, QGridLayout, QAction,
+                            QMenu, QToolBar, QSizePolicy, QScrollArea, QCheckBox,
+                            QDialog, QInputDialog)
+from PyQt5.QtGui import QPixmap, QImage, QFont, QColor, QPainter, QIcon, QDragEnterEvent, QDropEvent
+from PyQt5.QtCore import Qt, QSize, QPoint, QRect, QEvent, pyqtSignal, QMimeData
 
-# 导入核心模块
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core.file_handler import FileHandler
 from core.watermark import WatermarkProcessor
 from core.config_manager import ConfigManager
-
-from ui.image_list import ImageListWidget
-from ui.preview_panel import PreviewPanel
-from ui.watermark_panel import WatermarkPanel
+from ui.preview_widget import PreviewWidget
+from ui.image_list_widget import ImageListWidget
 
 class MainWindow(QMainWindow):
-    """主窗口类"""
-    
     def __init__(self):
         super().__init__()
-        
-        # 初始化核心模块
         self.file_handler = FileHandler()
         self.watermark_processor = WatermarkProcessor()
         self.config_manager = ConfigManager()
         
-        # 设置窗口属性
+        self.init_ui()
+        self.setup_connections()
+        self.load_templates()  # 加载所有模板
+        self.load_default_config()
+        
         self.setWindowTitle("水印文件本地应用")
         self.setMinimumSize(1000, 700)
-        
-        # 设置接受拖放
         self.setAcceptDrops(True)
+        self.showMaximized()  # 设置窗口启动时最大化
         
-        # 创建UI
-        self._create_ui()
-        self._create_menu()
-        self._create_toolbar()
-        self._create_statusbar()
+    def init_ui(self):
+        # 创建主窗口布局
+        main_widget = QWidget()
+        main_layout = QHBoxLayout()
+        main_widget.setLayout(main_layout)
+        self.setCentralWidget(main_widget)
         
-        # 加载上次配置
-        self.config_manager.load_last_config()
-        self._apply_config()
+        # 创建左侧图片列表区域
+        self.image_list = ImageListWidget()
         
-        # 连接信号和槽
-        self._connect_signals()
-    
-    def _create_ui(self):
-        """创建主界面"""
-        # 创建中央部件
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
+        # 创建中间预览区域
+        self.preview_widget = PreviewWidget(self.watermark_processor)
         
-        # 主布局
-        main_layout = QHBoxLayout(central_widget)
+        # 创建右侧控制面板
+        control_panel = QWidget()
+        control_layout = QVBoxLayout()
+        control_panel.setLayout(control_layout)
         
-        # 创建分割器
+        # 文件操作区域
+        file_group = QGroupBox("文件操作")
+        file_layout = QVBoxLayout()
+        
+        import_btn = QPushButton("导入图片")
+        import_folder_btn = QPushButton("导入文件夹")
+        export_btn = QPushButton("导出图片")
+        
+        file_layout.addWidget(import_btn)
+        file_layout.addWidget(import_folder_btn)
+        file_layout.addWidget(export_btn)
+        file_group.setLayout(file_layout)
+        
+        # 水印设置区域
+        watermark_group = QGroupBox("水印设置")
+        watermark_layout = QVBoxLayout()
+        
+        # 文本内容
+        text_layout = QHBoxLayout()
+        text_layout.addWidget(QLabel("文本内容:"))
+        self.text_input = QLineEdit("水印文本")
+        text_layout.addWidget(self.text_input)
+        
+        # 字体设置
+        font_layout = QHBoxLayout()
+        font_layout.addWidget(QLabel("字体大小:"))
+        self.font_size = QSpinBox()
+        self.font_size.setRange(8, 72)
+        self.font_size.setValue(24)
+        font_layout.addWidget(self.font_size)
+        
+        # 颜色设置
+        color_layout = QHBoxLayout()
+        color_layout.addWidget(QLabel("字体颜色:"))
+        self.color_btn = QPushButton()
+        self.color_btn.setFixedSize(24, 24)
+        self.current_color = QColor(255, 0, 0, 128)  # 半透明红色
+        self.update_color_button()
+        color_layout.addWidget(self.color_btn)
+        
+        # 透明度设置
+        opacity_layout = QHBoxLayout()
+        opacity_layout.addWidget(QLabel("透明度:"))
+        self.opacity_slider = QSlider(Qt.Horizontal)
+        self.opacity_slider.setRange(0, 100)
+        self.opacity_slider.setValue(50)
+        opacity_layout.addWidget(self.opacity_slider)
+        self.opacity_value = QLabel("50%")
+        opacity_layout.addWidget(self.opacity_value)
+        
+        # 位置设置
+        position_group = QGroupBox("位置设置")
+        position_layout = QGridLayout()
+        
+        # 九宫格位置选择
+        self.position_buttons = []
+        positions = [
+            (0, 0, "左上"), (0, 1, "上中"), (0, 2, "右上"),
+            (1, 0, "左中"), (1, 1, "中心"), (1, 2, "右中"),
+            (2, 0, "左下"), (2, 1, "下中"), (2, 2, "右下")
+        ]
+        
+        for row, col, text in positions:
+            btn = QPushButton(text)
+            btn.setCheckable(True)
+            position_layout.addWidget(btn, row, col)
+            self.position_buttons.append(btn)
+        
+        # 默认选中中心位置
+        self.position_buttons[4].setChecked(True)
+        
+        position_group.setLayout(position_layout)
+        
+        # 模板管理
+        template_group = QGroupBox("模板管理")
+        template_layout = QHBoxLayout()
+        
+        self.template_combo = QComboBox()
+        self.template_combo.addItem("默认模板")
+        save_template_btn = QPushButton("保存模板")
+        delete_template_btn = QPushButton("删除模板")
+        
+        template_layout.addWidget(self.template_combo)
+        template_layout.addWidget(save_template_btn)
+        template_layout.addWidget(delete_template_btn)
+        
+        template_group.setLayout(template_layout)
+        
+        # 添加所有控件到水印设置区域
+        watermark_layout.addLayout(text_layout)
+        watermark_layout.addLayout(font_layout)
+        watermark_layout.addLayout(color_layout)
+        watermark_layout.addLayout(opacity_layout)
+        watermark_layout.addWidget(position_group)
+        watermark_group.setLayout(watermark_layout)
+        
+        # 添加所有组到控制面板
+        control_layout.addWidget(file_group)
+        control_layout.addWidget(watermark_group)
+        control_layout.addWidget(template_group)
+        control_layout.addStretch()
+        
+        # 创建分割器并添加三个主要区域
         splitter = QSplitter(Qt.Horizontal)
+        splitter.addWidget(self.image_list)
+        splitter.addWidget(self.preview_widget)
+        splitter.addWidget(control_panel)
+        
+        # 设置分割器的初始大小比例
+        splitter.setSizes([200, 500, 300])
+        
         main_layout.addWidget(splitter)
         
-        # 左侧：图片列表
-        self.image_list = ImageListWidget(self.file_handler)
-        splitter.addWidget(self.image_list)
-        
-        # 中间：预览面板
-        self.preview_panel = PreviewPanel()
-        splitter.addWidget(self.preview_panel)
-        
-        # 右侧：水印设置面板
-        self.watermark_panel = WatermarkPanel(self.watermark_processor)
-        splitter.addWidget(self.watermark_panel)
-        
-        # 设置分割器比例
-        splitter.setSizes([200, 500, 300])
+        # 存储控件引用
+        self.import_btn = import_btn
+        self.import_folder_btn = import_folder_btn
+        self.export_btn = export_btn
+        self.save_template_btn = save_template_btn
+        self.delete_template_btn = delete_template_btn
     
-    def _create_menu(self):
-        """创建菜单栏"""
-        # 文件菜单
-        file_menu = self.menuBar().addMenu("文件")
+    def setup_connections(self):
+        # 文件操作
+        self.import_btn.clicked.connect(self.import_images)
+        self.import_folder_btn.clicked.connect(self.import_folder)
+        self.export_btn.clicked.connect(self.export_images)
         
+        # 水印设置
+        self.text_input.textChanged.connect(self.update_watermark)
+        self.font_size.valueChanged.connect(self.update_watermark)
+        self.color_btn.clicked.connect(self.choose_color)
+        self.opacity_slider.valueChanged.connect(self.update_opacity)
+        
+        # 位置设置
+        for i, btn in enumerate(self.position_buttons):
+            btn.clicked.connect(lambda checked, idx=i: self.set_position(idx))
+        
+        # 模板管理
+        self.save_template_btn.clicked.connect(self.save_template)
+        self.delete_template_btn.clicked.connect(self.delete_template)
+        self.template_combo.currentIndexChanged.connect(self.load_template)
+        
+        # 图片列表
+        self.image_list.currentItemChanged.connect(self.change_preview_image)
+    
+    def load_default_config(self):
+        # 加载默认配置或上次的配置
+        config = self.config_manager.load_default_config()
+        if config:
+            self.apply_config(config)
+            # 如果是上次使用的配置，在UI中显示"上次设置"
+            if os.path.exists(self.config_manager.last_config_path):
+                # 查找是否有匹配的模板
+                for i in range(self.template_combo.count()):
+                    template_name = self.template_combo.itemText(i)
+                    template_config = self.config_manager.load_template(template_name)
+                    if template_config == config:
+                        self.template_combo.setCurrentIndex(i)
+                        break
+    
+    def apply_config(self, config):
+        # 应用配置到UI
+        if 'text' in config:
+            self.text_input.setText(config['text'])
+        if 'font_size' in config:
+            self.font_size.setValue(config['font_size'])
+        if 'color' in config:
+            self.current_color = QColor(*config['color'])
+            self.update_color_button()
+        if 'opacity' in config:
+            self.opacity_slider.setValue(config['opacity'])
+            
+        # 处理位置信息
+        if 'custom_position' in config:
+            # 优先使用自定义位置
+            custom_pos = QPoint(config['custom_position'][0], config['custom_position'][1])
+            self.watermark_processor.set_custom_position(custom_pos)
+            # 取消所有位置按钮的选中状态
+            for btn in self.position_buttons:
+                btn.setChecked(False)
+        elif 'relative_position' in config:
+            # 使用相对位置
+            self.watermark_processor.relative_position = config['relative_position']
+            # 取消所有位置按钮的选中状态
+            for btn in self.position_buttons:
+                btn.setChecked(False)
+        elif 'position' in config:
+            # 使用预设位置
+            for btn in self.position_buttons:
+                btn.setChecked(False)
+            self.position_buttons[config['position']].setChecked(True)
+            # 将位置信息应用到水印处理器
+            self.watermark_processor.set_position(config['position'])
+    
+    def update_color_button(self):
+        # 更新颜色按钮的背景色
+        style = f"background-color: rgba({self.current_color.red()}, {self.current_color.green()}, {self.current_color.blue()}, {self.current_color.alpha()});"
+        self.color_btn.setStyleSheet(style)
+    
+    def update_opacity(self, value):
+        # 更新透明度值
+        self.opacity_value.setText(f"{value}%")
+        self.current_color.setAlpha(int(255 * value / 100))
+        self.update_color_button()
+        self.update_watermark()
+    
+    def choose_color(self):
+        # 选择颜色
+        color = QColorDialog.getColor(self.current_color, self, "选择水印颜色", QColorDialog.ShowAlphaChannel)
+        if color.isValid():
+            self.current_color = color
+            self.update_color_button()
+            # 更新透明度滑块
+            self.opacity_slider.setValue(int(color.alpha() / 2.55))
+            self.update_watermark()
+    
+    def set_position(self, position_index):
+        # 设置水印位置
+        for i, btn in enumerate(self.position_buttons):
+            if i != position_index:
+                btn.setChecked(False)
+        
+        # 使用九宫格位置时，清除自定义位置和相对位置
+        self.watermark_processor.set_position(position_index)
+        # 更新预览
+        self.preview_widget.update_preview()
+    
+    def update_watermark(self):
+        # 更新水印设置
+        text = self.text_input.text()
+        font_size = self.font_size.value()
+        color = self.current_color
+        
+        self.watermark_processor.set_text(text)
+        self.watermark_processor.set_font_size(font_size)
+        self.watermark_processor.set_color(color)
+        
+        self.preview_widget.update_preview()
+    
+    def import_images(self):
         # 导入图片
-        import_action = QAction("导入图片", self)
-        import_action.triggered.connect(self._import_images)
-        file_menu.addAction(import_action)
-        
-        # 导入文件夹
-        import_dir_action = QAction("导入文件夹", self)
-        import_dir_action.triggered.connect(self._import_directory)
-        file_menu.addAction(import_dir_action)
-        
-        file_menu.addSeparator()
-        
-        # 导出图片
-        export_action = QAction("导出图片", self)
-        export_action.triggered.connect(self._export_images)
-        file_menu.addAction(export_action)
-        
-        file_menu.addSeparator()
-        
-        # 退出
-        exit_action = QAction("退出", self)
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-        
-        # 模板菜单
-        template_menu = self.menuBar().addMenu("模板")
-        
-        # 保存模板
-        save_template_action = QAction("保存当前设置为模板", self)
-        save_template_action.triggered.connect(self._save_template)
-        template_menu.addAction(save_template_action)
-        
-        # 加载模板
-        load_template_action = QAction("加载模板", self)
-        load_template_action.triggered.connect(self._load_template)
-        template_menu.addAction(load_template_action)
-        
-        # 管理模板
-        manage_template_action = QAction("管理模板", self)
-        manage_template_action.triggered.connect(self._manage_templates)
-        template_menu.addAction(manage_template_action)
-        
-        # 帮助菜单
-        help_menu = self.menuBar().addMenu("帮助")
-        
-        # 关于
-        about_action = QAction("关于", self)
-        about_action.triggered.connect(self._show_about)
-        help_menu.addAction(about_action)
-    
-    def _create_toolbar(self):
-        """创建工具栏"""
-        toolbar = QToolBar("主工具栏")
-        self.addToolBar(toolbar)
-        
-        # 工具栏已移除导入和导出按钮，因为这些功能已在文件菜单中存在
-    
-    def _create_statusbar(self):
-        """创建状态栏"""
-        self.statusBar = QStatusBar()
-        self.setStatusBar(self.statusBar)
-        self.statusBar.showMessage("就绪")
-    
-    def _connect_signals(self):
-        """连接信号和槽"""
-        # 图片列表选择变化
-        self.image_list.currentItemChanged.connect(self._update_preview)
-        
-        # 水印设置变化
-        self.watermark_panel.settings_changed.connect(self._update_preview)
-    
-    def _import_images(self):
-        """导入图片"""
         file_paths, _ = QFileDialog.getOpenFileNames(
-            self, "选择图片", "", "图片文件 (*.jpg *.jpeg *.png *.bmp *.tif *.tiff)"
+            self, "选择图片", "", "图片文件 (*.jpg *.jpeg *.png *.bmp *.tiff)"
         )
         
         if file_paths:
-            success, total = self.file_handler.import_images(file_paths)
-            self.statusBar.showMessage(f"成功导入 {success}/{total} 张图片")
-            self.image_list.refresh_list()
+            self.process_imported_files(file_paths)
     
-    def _import_directory(self):
-        """导入文件夹"""
-        directory = QFileDialog.getExistingDirectory(self, "选择文件夹")
+    def import_folder(self):
+        # 导入文件夹
+        folder_path = QFileDialog.getExistingDirectory(self, "选择文件夹")
         
-        if directory:
-            success, total = self.file_handler.import_directory(directory)
-            self.statusBar.showMessage(f"成功导入 {success}/{total} 张图片")
-            self.image_list.refresh_list()
+        if folder_path:
+            file_paths = self.file_handler.get_images_from_folder(folder_path)
+            self.process_imported_files(file_paths)
     
-    def _export_images(self):
-        """导出所有图片"""
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QPushButton, QRadioButton, QButtonGroup, QGroupBox, QFileDialog, QMessageBox
+    def process_imported_files(self, file_paths):
+        # 处理导入的文件
+        for file_path in file_paths:
+            self.image_list.add_image(file_path)
         
-        if not self.file_handler.get_imported_images():
+        # 如果这是第一张图片，则显示预览
+        if self.image_list.count() > 0 and self.preview_widget.current_image is None:
+            self.image_list.setCurrentRow(0)
+    
+    def change_preview_image(self, current, previous):
+        # 切换预览图片
+        if current:
+            image_path = current.data(Qt.UserRole)
+            self.preview_widget.set_image(image_path)
+    
+    def export_images(self):
+        # 导出图片
+        if self.image_list.count() == 0:
             QMessageBox.warning(self, "警告", "没有可导出的图片")
             return
         
-        # 创建统一的导出配置对话框
-        export_dialog = QDialog(self)
-        export_dialog.setWindowTitle("导出配置")
-        export_dialog.setMinimumWidth(400)
+        # 收集所有图片路径
+        image_paths = []
+        for i in range(self.image_list.count()):
+            item = self.image_list.item(i)
+            image_path = item.data(Qt.UserRole)
+            image_paths.append(image_path)
         
-        layout = QVBoxLayout()
+        # 打开导出配置对话框
+        from ui.export_dialog import ExportDialog
+        dialog = ExportDialog(self, image_paths)
+        if dialog.exec_() != QDialog.Accepted:
+            return
         
-        # 输出目录选择
-        dir_group = QGroupBox("输出目录")
-        dir_layout = QHBoxLayout()
-        self.output_dir_edit = QLineEdit()
-        self.output_dir_edit.setReadOnly(True)
-        browse_button = QPushButton("浏览...")
-        browse_button.clicked.connect(self._browse_output_dir)
-        dir_layout.addWidget(self.output_dir_edit)
-        dir_layout.addWidget(browse_button)
-        dir_group.setLayout(dir_layout)
-        layout.addWidget(dir_group)
+        # 获取导出配置
+        config = dialog.get_export_config()
+        output_dir = config["output_dir"]
+        prefix = config["prefix"]
+        suffix = config["suffix"]
+        format_option = config["format"]
+        quality = config.get("quality", 95)  # 获取质量设置，默认95
         
-        # 输出格式选择
-        format_group = QGroupBox("输出格式")
-        format_layout = QHBoxLayout()
-        format_combo = QComboBox()
-        format_combo.addItems(["JPEG", "PNG"])
-        format_layout.addWidget(format_combo)
-        format_group.setLayout(format_layout)
-        layout.addWidget(format_group)
-        
-        # 命名规则选择
-        naming_group = QGroupBox("文件命名规则")
-        naming_layout = QVBoxLayout()
-        
-        naming_radio_group = QButtonGroup(export_dialog)
-        original_radio = QRadioButton("保持原文件名")
-        prefix_radio = QRadioButton("添加前缀")
-        suffix_radio = QRadioButton("添加后缀")
-        
-        naming_radio_group.addButton(original_radio, 0)
-        naming_radio_group.addButton(prefix_radio, 1)
-        naming_radio_group.addButton(suffix_radio, 2)
-        original_radio.setChecked(True)
-        
-        prefix_layout = QHBoxLayout()
-        prefix_layout.addWidget(QLabel("前缀:"))
-        prefix_edit = QLineEdit("wm_")
-        prefix_layout.addWidget(prefix_edit)
-        
-        suffix_layout = QHBoxLayout()
-        suffix_layout.addWidget(QLabel("后缀:"))
-        suffix_edit = QLineEdit("_watermarked")
-        suffix_layout.addWidget(suffix_edit)
-        
-        naming_layout.addWidget(original_radio)
-        naming_layout.addWidget(prefix_radio)
-        naming_layout.addLayout(prefix_layout)
-        naming_layout.addWidget(suffix_radio)
-        naming_layout.addLayout(suffix_layout)
-        
-        naming_group.setLayout(naming_layout)
-        layout.addWidget(naming_group)
-        
-        # 按钮
-        button_layout = QHBoxLayout()
-        export_button = QPushButton("导出")
-        cancel_button = QPushButton("取消")
-        
-        export_button.clicked.connect(lambda: self._process_export(
-            export_dialog,
-            self.output_dir_edit.text(),
-            format_combo.currentText(),
-            naming_radio_group.checkedId(),
-            prefix_edit.text(),
-            suffix_edit.text()
-        ))
-        cancel_button.clicked.connect(export_dialog.reject)
-        
-        button_layout.addWidget(export_button)
-        button_layout.addWidget(cancel_button)
-        layout.addLayout(button_layout)
-        
-        export_dialog.setLayout(layout)
-        export_dialog.exec_()
-    
-    def _browse_output_dir(self):
-        """浏览并选择输出目录"""
-        output_dir = QFileDialog.getExistingDirectory(self, "选择输出目录")
-        if output_dir:
-            # 检查是否与导入目录相同
-            import_dirs = set()
-            for image_info in self.file_handler.get_imported_images():
-                import_dirs.add(os.path.dirname(os.path.abspath(image_info["path"])))
-            
-            if os.path.abspath(output_dir) in import_dirs:
-                QMessageBox.warning(self, "警告", "输出目录不能与导入目录相同，以防止覆盖原图")
-                return
-                
-            self.output_dir_edit.setText(output_dir)
-    
-    def _process_export(self, dialog, output_dir, output_format, naming_type_id, prefix, suffix):
-        """处理导出操作"""
-        # 检查输出目录
         if not output_dir:
-            QMessageBox.warning(self, "警告", "请选择输出目录")
+            QMessageBox.warning(self, "警告", "请选择有效的输出目录")
             return
             
-        # 设置输出目录
-        if not self.file_handler.set_output_directory(output_dir):
-            QMessageBox.critical(self, "错误", "设置输出目录失败")
-            return
-            
-        # 设置输出格式
-        self.file_handler.set_output_format(output_format)
-        
-        # 设置命名规则
-        naming_type = ["original", "prefix", "suffix"][naming_type_id]
-        value = prefix if naming_type == "prefix" else suffix if naming_type == "suffix" else ""
-        self.file_handler.set_naming_rule(naming_type, value)
-        
-        # 处理所有图片并导出
-        try:
-            watermarked_images = {}
-            for image_info in self.file_handler.get_imported_images():
-                try:
-                    with Image.open(image_info["path"]) as img:
-                        watermarked_img = self.watermark_processor.add_watermark(img)
-                        watermarked_images[image_info["path"]] = watermarked_img
-                except Exception as e:
-                    QMessageBox.warning(self, "警告", f"处理图片 {os.path.basename(image_info['path'])} 时出错: {str(e)}")
-            
-            # 导出图片
-            success_count, total_count = 0, len(watermarked_images)
-            for original_path, img in watermarked_images.items():
-                export_path = self.file_handler.export_image(original_path, img)
-                if export_path:
-                    success_count += 1
-            
-            # 关闭对话框
-            dialog.accept()
-            
-            # 显示导出结果
-            if success_count > 0:
-                QMessageBox.information(
+        # 安全检查：检查是否导出到原图片所在文件夹
+        import os
+        for image_path in image_paths:
+            image_dir = os.path.dirname(image_path)
+            if os.path.normpath(image_dir) == os.path.normpath(output_dir):
+                result = QMessageBox.warning(
                     self, 
-                    "导出完成", 
-                    f"成功导出 {success_count}/{total_count} 张图片到:\n{output_dir}"
+                    "安全警告", 
+                    "您正在尝试导出到原图片所在的文件夹，这可能会覆盖原图。\n是否继续？",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.No
                 )
-                self.statusBar.showMessage(f"成功导出 {success_count}/{total_count} 张图片到 {output_dir}")
-            else:
-                QMessageBox.warning(self, "警告", "没有图片被成功导出")
-                
-        except Exception as e:
-            QMessageBox.critical(self, "错误", f"导出过程中发生错误: {str(e)}")
-    
-    def _update_preview(self):
-        """更新预览"""
-        # 获取当前选中的图片
-        current_item = self.image_list.currentItem()
-        if not current_item:
-            self.preview_panel.clear_preview()
-            return
+                if result == QMessageBox.No:
+                    return
+                break
         
-        # 获取图片路径
-        image_path = current_item.data(Qt.UserRole)
-        
-        try:
-            # 直接使用QPixmap加载图片用于预览
-            pixmap = QPixmap(image_path)
-            if not pixmap.isNull():
-                # 调整大小以适应预览区域
-                pixmap = pixmap.scaled(
-                    self.preview_panel.preview_label.width(),
-                    self.preview_panel.preview_label.height(),
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation
-                )
-                # 直接设置预览图片
-                self.preview_panel.preview_label.setPixmap(pixmap)
-                # 更新状态栏
-                self.statusBar.showMessage(f"已加载图片: {os.path.basename(image_path)}")
-                return
-                
-            # 如果QPixmap加载失败，尝试使用PIL
-            # 使用PIL打开图片
-            with Image.open(image_path) as img:
-                # 确保图片是RGB模式
-                if img.mode != 'RGB' and img.mode != 'RGBA':
-                    img = img.convert('RGB')
-                
-                # 添加水印
-                watermarked = self.watermark_processor.add_watermark(img.copy())
-                
-                # 更新预览
-                self.preview_panel.set_preview(watermarked)
-                
-                # 更新状态栏
-                self.statusBar.showMessage(f"已加载图片: {os.path.basename(image_path)}")
+        # 导出所有图片
+        success_count = 0
+        for i in range(self.image_list.count()):
+            item = self.image_list.item(i)
+            image_path = item.data(Qt.UserRole)
             
-        except UnicodeEncodeError:
-            # 特别处理编码错误
-            self.statusBar.showMessage("预览图片时出现编码错误，请检查水印文本")
-            self.preview_panel.clear_preview()
-        except Exception as e:
-            self.statusBar.showMessage(f"预览图片时出错: {str(e)}")
-            self.preview_panel.clear_preview()
+            # 应用水印并保存
+            success = self.watermark_processor.apply_watermark_and_save(
+                image_path, output_dir, prefix, suffix, format_option
+            )
+            
+            if success:
+                success_count += 1
+        
+        QMessageBox.information(self, "导出完成", f"成功导出 {success_count} 张图片到 {output_dir}")
     
-    def _save_template(self):
-        """保存当前设置为模板"""
-        # 获取模板名称
-        name, ok = QInputDialog.getText(self, "保存模板", "请输入模板名称:")
-        if not ok or not name:
+    def save_template(self):
+        # 保存当前水印设置为模板
+        template_name, ok = QInputDialog.getText(self, "保存模板", "请输入模板名称:")
+        
+        if ok and template_name:
+            # 获取当前设置
+            config = {
+                'text': self.text_input.text(),
+                'font_size': self.font_size.value(),
+                'color': (self.current_color.red(), self.current_color.green(), 
+                          self.current_color.blue(), self.current_color.alpha()),
+                'opacity': self.opacity_slider.value(),
+                'position': self.get_current_position_index()
+            }
+            
+            # 保存自定义位置信息
+            if self.watermark_processor.custom_position:
+                config['custom_position'] = (
+                    self.watermark_processor.custom_position.x(),
+                    self.watermark_processor.custom_position.y()
+                )
+            
+            # 保存相对位置信息
+            if self.watermark_processor.relative_position:
+                config['relative_position'] = self.watermark_processor.relative_position
+            
+            # 保存模板
+            self.config_manager.save_template(template_name, config)
+            
+            # 更新模板列表
+            if self.template_combo.findText(template_name) == -1:
+                self.template_combo.addItem(template_name)
+            
+            QMessageBox.information(self, "保存成功", f"模板 '{template_name}' 已保存")
+    
+    def delete_template(self):
+        # 删除当前选中的模板
+        current_template = self.template_combo.currentText()
+        
+        if current_template == "默认模板":
+            QMessageBox.warning(self, "警告", "无法删除默认模板")
             return
         
-        # 更新当前配置
-        self._update_config()
+        reply = QMessageBox.question(self, "确认删除", 
+                                     f"确定要删除模板 '{current_template}' 吗？",
+                                     QMessageBox.Yes | QMessageBox.No)
         
-        # 保存模板
-        if self.config_manager.save_template(name):
-            QMessageBox.information(self, "成功", f"模板 '{name}' 保存成功")
-        else:
-            QMessageBox.warning(self, "警告", f"保存模板 '{name}' 失败")
+        if reply == QMessageBox.Yes:
+            self.config_manager.delete_template(current_template)
+            self.template_combo.removeItem(self.template_combo.currentIndex())
+            QMessageBox.information(self, "删除成功", f"模板 '{current_template}' 已删除")
     
-    def _load_template(self):
-        """加载模板"""
-        # 获取模板列表
-        templates = self.config_manager.get_template_list()
-        if not templates:
-            QMessageBox.information(self, "提示", "没有可用的模板")
-            return
-        
-        # 选择模板
-        template, ok = QInputDialog.getItem(self, "加载模板", "请选择模板:", templates, 0, False)
-        if not ok or not template:
-            return
-        
-        # 加载模板
-        if self.config_manager.load_template(template):
-            # 应用配置
-            self._apply_config()
-            QMessageBox.information(self, "成功", f"模板 '{template}' 加载成功")
-        else:
-            QMessageBox.warning(self, "警告", f"加载模板 '{template}' 失败")
+    def load_templates(self):
+        """加载所有可用的模板到下拉列表"""
+        # 清空当前列表（保留默认模板）
+        while self.template_combo.count() > 1:
+            self.template_combo.removeItem(1)
+            
+        # 获取所有模板并添加到下拉列表
+        templates = self.config_manager.get_all_templates()
+        for template in templates:
+            if template != "默认模板" and self.template_combo.findText(template) == -1:
+                self.template_combo.addItem(template)
     
-    def _manage_templates(self):
-        """管理模板"""
-        # 获取模板列表
-        templates = self.config_manager.get_template_list()
-        if not templates:
-            QMessageBox.information(self, "提示", "没有可用的模板")
-            return
+    def load_template(self, index):
+        # 加载选中的模板
+        template_name = self.template_combo.currentText()
         
-        # 选择要删除的模板
-        template, ok = QInputDialog.getItem(self, "删除模板", "请选择要删除的模板:", templates, 0, False)
-        if not ok or not template:
-            return
-        
-        # 确认删除
-        reply = QMessageBox.question(self, "确认", f"确定要删除模板 '{template}' 吗?",
-                                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply != QMessageBox.Yes:
-            return
-        
-        # 删除模板
-        if self.config_manager.delete_template(template):
-            QMessageBox.information(self, "成功", f"模板 '{template}' 删除成功")
-        else:
-            QMessageBox.warning(self, "警告", f"删除模板 '{template}' 失败")
+        if template_name:
+            config = self.config_manager.load_template(template_name)
+            if config:
+                self.apply_config(config)
+                self.update_watermark()
+                # 保存为上次使用的配置
+                self.config_manager.save_last_config(config)
     
-    def _show_about(self):
-        """显示关于对话框"""
-        QMessageBox.about(self, "关于", "水印文件本地应用\n\n版本: 1.0\n\n一款简单易用的本地水印应用程序")
-    
-    def _update_config(self):
-        """更新当前配置"""
-        # 获取水印设置
-        watermark_settings = self.watermark_panel.get_settings()
-        
-        # 获取导出设置
-        export_settings = {
-            "format": self.file_handler.output_format,
-            "naming_rule": self.file_handler.naming_rule
-        }
-        
-        # 更新配置
-        config = {
-            "watermark": watermark_settings,
-            "export": export_settings
-        }
-        self.config_manager.set_current_config(config)
-    
-    def _apply_config(self):
-        """应用当前配置"""
-        config = self.config_manager.get_current_config()
-        
-        # 应用水印设置
-        if "watermark" in config:
-            self.watermark_panel.apply_settings(config["watermark"])
-        
-        # 应用导出设置
-        if "export" in config:
-            export_config = config["export"]
-            if "format" in export_config:
-                self.file_handler.set_output_format(export_config["format"])
-            if "naming_rule" in export_config:
-                rule = export_config["naming_rule"]
-                if rule["type"] == "prefix":
-                    self.file_handler.set_naming_rule("prefix", rule["prefix"])
-                elif rule["type"] == "suffix":
-                    self.file_handler.set_naming_rule("suffix", rule["suffix"])
-                else:
-                    self.file_handler.set_naming_rule("original")
+    def get_current_position_index(self):
+        # 获取当前选中的位置索引
+        for i, btn in enumerate(self.position_buttons):
+            if btn.isChecked():
+                return i
+        return 4  # 默认中心位置
     
     def dragEnterEvent(self, event: QDragEnterEvent):
-        """拖拽进入事件"""
+        # 拖拽进入事件
         if event.mimeData().hasUrls():
             event.acceptProposedAction()
     
     def dropEvent(self, event: QDropEvent):
-        """拖拽放下事件"""
+        # 拖拽放下事件
         urls = event.mimeData().urls()
-        file_paths = []
-        directories = []
+        file_paths = [url.toLocalFile() for url in urls]
         
-        for url in urls:
-            path = url.toLocalFile()
-            if os.path.isfile(path):
-                file_paths.append(path)
-            elif os.path.isdir(path):
-                directories.append(path)
+        # 过滤出图片文件
+        image_paths = self.file_handler.filter_image_files(file_paths)
         
-        # 导入文件
-        if file_paths:
-            success, total = self.file_handler.import_images(file_paths)
-            self.statusBar.showMessage(f"成功导入 {success}/{total} 张图片")
-        
-        # 导入目录
-        for directory in directories:
-            success, total = self.file_handler.import_directory(directory)
-            self.statusBar.showMessage(f"成功导入 {success}/{total} 张图片")
-        
-        # 刷新列表
-        self.image_list.refresh_list()
-    
-    def closeEvent(self, event):
-        """关闭事件"""
-        # 保存当前配置
-        self._update_config()
-        self.config_manager.save_last_config()
-        event.accept()
+        if image_paths:
+            self.process_imported_files(image_paths)
